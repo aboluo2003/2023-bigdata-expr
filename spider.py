@@ -108,18 +108,18 @@ def store_data_in_hbase(data) :
 
 # 网站列表
 urls = [
-#    'http://sds.ustc.edu.cn/main.htm',
+  #  'http://sds.ustc.edu.cn/main.htm',
     'http://sds.ustc.edu.cn/15443/list.htm',
     'https://zsb.ustc.edu.cn/main.htm',
     'http://www.job.ustc.edu.cn/index.htm',
-#    'https://www.teach.ustc.edu.cn/',
-#    'https://finance.ustc.edu.cn/main.htm',
+  #  'https://www.teach.ustc.edu.cn/',
+  #  'https://finance.ustc.edu.cn/main.htm',
     'https://finance.ustc.edu.cn/xzzx/list.psp',
 
     # 需要登录
     'https://xgyth.ustc.edu.cn/usp/home/main.aspx',
 
-#    'http://gradschool.ustc.edu.cn/',
+  #  'http://gradschool.ustc.edu.cn/',
     
     # 找到部分文件需要多级目录
     'http://gradschool.ustc.edu.cn/column/11'
@@ -132,17 +132,21 @@ urls = [
     # 有很多页面
     'http://young.ustc.edu.cn/15056/list.htm',
     
-    # 以下未检查
-    'http://ustcnet.ustc.edu.cn/main.htm',
-    'https://zhc.ustc.edu.cn/main.htm',
+    # 'http://ustcnet.ustc.edu.cn/main.htm',
+    'http://ustcnet.ustc.edu.cn/33419/list.htm',
+    # 'https://zhc.ustc.edu.cn/main.htm',
+    'https://zhc.ustc.edu.cn/wdxzn/list.htm',
     'http://cs.ustc.edu.cn/main.htm',
     'http://cybersec.ustc.edu.cn/main.htm',
     'https://math.ustc.edu.cn/main.htm',
-    'https://sist.ustc.edu.cn/main.htm',
-    'https://sz.ustc.edu.cn/index.html',
-    'https://sse.ustc.edu.cn/main.htm',
-    'https://iat.ustc.edu.cn/iat/index.html',
-    
+    # 'https://sist.ustc.edu.cn/main.htm',
+    'https://sist.ustc.edu.cn/5079/list.htm',
+    # 'https://sz.ustc.edu.cn/index.html',
+    'https://sz.ustc.edu.cn/wdxz_list/98-1.html',
+    # 'https://sse.ustc.edu.cn/main.htm',
+    'https://sse.ustc.edu.cn/wdxz_19877/list.htm',
+    # 'https://iat.ustc.edu.cn/iat/index.html',
+    'https://iat.ustc.edu.cn/iat/x161/'
     # 添加其余网址...
 ]
 
