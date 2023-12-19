@@ -8,7 +8,7 @@ import happybase
 import datetime
 
 # HBase连接和表设置
-connection = happybase.Connection('localhost', 9090, autoconnect=False)
+connection = happybase.Connection('localhost', 9000, autoconnect=False)
 connection.open()
 table_name = 'file_links'
 families = {'file_info': dict()}
@@ -74,8 +74,8 @@ urls = [
 
 # 针对每个网站运行爬虫
 for url in urls:
-    file_data_list = scrape_website(url)
-    store_data_in_hbase(file_data_list)
+  file_data_list = scrape_website(url)
+  store_data_in_hbase(file_data_list)
 
-    # 添加延时，QPS约为10
-    time.sleep(0.1)  # 每个请求之间暂停0.1秒
+  # 添加延时，QPS约为10
+  time.sleep(0.1)  # 每个请求之间暂停0.1秒
