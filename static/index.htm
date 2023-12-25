@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+
+  </head>
+  <body>
+    <input id="search-bar"/>
+    <button id="search-bar-ok">Search</button>
+
+    <script>
+      button = document.getElementById('search-bar-ok')
+      button.onclick = function() {
+        const params = new URLSearchParams();
+        params.append('q', document.getElementById('search-bar').value);
+
+        const url = '/query?' + params.toString();
+        fetch(url)
+          .then(response => response.json())
+          .then(data => {
+            console.log(data)
+          })
+      } 
+    </script>
+  </body>
+</html>

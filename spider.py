@@ -3,14 +3,18 @@
 import re
 import time
 import json
+import queue
+import hashlib
 import requests
 import datetime
+import warnings
+import traceback
 import happybase
 
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 # HBase连接和表设置
 # 使用内存池，每次操作时新建连接，避免连接关闭
@@ -28,6 +32,8 @@ with pool.connection() as conn :
   conn.close()
 
 def load_visited_url() :
+  warnings.warn('visited_url.json is not loaded')
+  return set({})
   try :
     with open('visited_url.json', 'r', encoding = 'utf8') as f :
       visited_url = set(json.load(f))
@@ -38,127 +44,196 @@ def load_visited_url() :
 def save_visited_url(visited_url) :
   with open('visited_url.json', 'w', encoding = 'utf8') as f :
     json.dump(list(visited_url), f, ensure_ascii = False, indent = 2)
+def save_log() :
+  with open('log.json', 'w', encoding = 'utf8') as f :
+    json.dump(log_json, f, ensure_ascii = False, indent = 2)
 
+log_json = {
+  'errors': [],
+  'prevented': [],
+  'not-html': []
+}
 visited_url = load_visited_url()
 
+def get_visit_path(visit_stack) :
+  return '->'.join([x['desc'] for x in visit_stack])
+
+def is_visitable(link) :
+  href = link['href']
+  return (not href.startswith('#')) and (not href.startswith('javascript')) and (not href.startswith('mailto'))
+
+def is_ustc_domain(url) :
+  parsed_url = urlparse(url)
+  if not parsed_url.netloc.endswith('.ustc.edu.cn') :
+    return False
+  return True
+
+def is_downloadable(url) :
+  return re.search('\.(pdf|txt|docx|doc|xlsx|xls|ppt|pptx|tex|zip|csv|rar|tar\.gz)$', url, re.IGNORECASE) 
+
 # 爬虫函数
-def search(root_url, dep_limit: int) :
+def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_interval = 100) :
+  
   '''
   爬取指定 url 中的文件，并访问期中的 url。 
   - dep_limit: 深度限制，每访问一个 url 减少 1，当为 0 的时候停止搜索。
   '''
 
-  if dep_limit <= 0 :
-    return []
-  if root_url in visited_url :
-    return []
-  visited_url.add(root_url)
+  Q = queue.Queue()
 
-  # 添加延时，QPS约为10
-  time.sleep(0.1)  # 每个请求之间暂停0.1秒
+  for root_url, desc in url_list :
+    Q.put({
+      'url': root_url,
+      'stack': [{
+        'url': root_url,
+        'desc': desc
+      }],
+      'ttl': dep_limit
+    })
+    visited_url.add(root_url)
+
+  def save_queue_cache() :
+    Qjson = list(Q.queue)
+    with open('queue.json', 'w', encoding='utf8') as f :
+      json.dump(Qjson, f, ensure_ascii = False, indent = 2)
+
   file_data_list = []
-  
-  try :
-    response = requests.get(root_url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    for link in soup.find_all('a', href = True) :
-      if link['href'].startswith('#') or link['href'].startswith('javascript') :
-        continue
-      real_url = urljoin(root_url, link['href'])
-      if re.search('\.(pdf|txt|docx)$', real_url, re.IGNORECASE):
-        file_type = real_url.split('.')[-1]
-        file_data_list.append({
-          'url': real_url,
-          'type': file_type,
-          'source': url,
-          'date': datetime.datetime.now().strftime("%Y-%m-%d")
+  err_count = 0
+  bar = tqdm()
+
+  while not Q.empty() :
+    element = Q.get()
+    url = element['url']
+    ttl = element['ttl']
+    if err_count == 0 :
+      bar.set_description(f'Processing {url}')
+    else :
+      bar.set_description(f'{err_count} error(s) occurred. Procession {url}')
+    bar.update(1)
+    if bar.n % auto_save_interval == 0 :
+      save_visited_url(visited_url)
+      save_queue_cache()
+      save_log()
+    try :
+      response = requests.get(url)
+      # 检查 Header 中是否有 html
+      if not 'html' in response.headers.get('Content-Type', '').lower() :
+        log_json['not-html'].append({
+          'url': url,
+          'content-type': response.headers.get('Content-Type', '')
         })
-      else :
-        file_data_list.extend(search(real_url, dep_limit - 1))
-  except Exception as e :
-    print(f'Error while processing {root_url}')
-    print(e)
+        continue
+      soup = BeautifulSoup(response.content, 'html.parser')
+      
+      time.sleep(0.1)  # 每个请求之间暂停0.1秒
+
+      for link in soup.find_all('a', href = True) :
+        if not is_visitable(link) :
+          continue
+
+        real_url = urljoin(url, link['href'])
+        if prevent_not_ustc and not is_ustc_domain(real_url) :
+          parsed_url = urlparse(real_url)
+          log_json['prevented'].append({
+            'url': real_url,
+            'netloc': parsed_url.netloc
+          })
+          continue
+
+        descript = link.get_text()
+
+        if real_url in visited_url :
+          continue
+        visited_url.add(real_url)
+
+        if is_downloadable(real_url) :
+          file_type = real_url.split('.')[-1]
+          file_data_list.append({
+            'title': descript,
+            'type': file_type,
+            'path': get_visit_path(element['stack']),
+            'root': element['stack'][0]['desc'],
+            'source': url,
+            'url': real_url,
+            'crawl-time': datetime.datetime.now().strftime("%Y-%m-%d")
+          })
+        elif ttl > 0 :
+          next_stack = list(element['stack'])
+          next_stack.append({
+            'url': real_url,
+            'desc': descript
+          })
+          Q.put({
+            'url': real_url,
+            'stack': next_stack,
+            'ttl': ttl - 1
+          })
+    except KeyboardInterrupt as e :
+      save_log()
+      save_queue_cache()
+      save_visited_url(visited_url)
+      break
+    except Exception as e :
+      log_json['errors'].append({
+        'location': url,
+        'msg': traceback.format_exc() 
+      })
+      err_count += 1
+      save_log()
   return file_data_list
-
-def has_chinese(word) :
-  pattern = re.compile(r'[\\u4e00-\\u9fa5]')
-  if pattern.search(word) :
-    return True
-  return False
-
 
 # 存储到 HBase 的函数
 def store_data_in_hbase(data) :
   if len(data) == 0 :
     return
+  key_feilds = ['title', 'type', 'url']
   with pool.connection() as conn :
     table = conn.table(table_name)
-    for file_data in tqdm(data) :
-      row_key = f"{file_data['source']}_{file_data['type']}_{file_data['url']}"
-      try :
-        table.put(row_key, {
-          'file_info:url': file_data['url'],
-          'file_info:type': file_data['type'],
-          'file_info:source': file_data['source'],
-          'file_info:date': file_data['date']
-        })
-      except Exception as e :
-        print(f'Error while processing {row_key}')
-    conn.close()
+    with table.batch() as batch :
+      for file_data in tqdm(data) :
+        key_data = {key: file_data[key] for key in key_feilds}
+        row_key = hashlib.sha256(str(key_data).encode('utf8')).hexdigest().encode('utf8')
+        for key, val in file_data.items() :
+          batch.put(row_key, {f'file_info:{key}'.encode('utf8'): str(val).encode('utf8')})
+      batch.send()
+
+raw_text = r"""中科大本科生招生网 https://zsb.ustc.edu.cn/main.htm
+中科大就业信息网 http://www.job.ustc.edu.cn/index.htm
+中科大教务处 https://www.teach.ustc.edu.cn/
+中科大财务处 https://finance.ustc.edu.cn/main.htm
+学工一体化 https://xgyth.ustc.edu.cn/usp/home/main.aspx
+中科大研究生院 http://gradschool.ustc.edu.cn/
+中科大保卫与校园管理处 https://bwc.ustc.edu.cn/5655/list.htm
+中科大出版社 http://press.ustc.edu.cn/xzzq/main.htm
+中科大信息科学实验中心 http://ispc.ustc.edu.cn/6299/list.htm
+中科大科技成果转移转化办公室 http://zhb.ustc.edu.cn/18534/list1.htm
+青春科大 http://young.ustc.edu.cn/15056/list.htm
+中科大网络信息中心 http://ustcnet.ustc.edu.cn/main.htm
+中科大资产与后勤保障处 https://zhc.ustc.edu.cn/main.htm
+中科大计算机科学与技术学院 http://cs.ustc.edu.cn/main.htm
+中科大网络空间安全学院 http://cybersec.ustc.edu.cn/main.htm
+中科大数学科学学院 https://math.ustc.edu.cn/main.htm
+中科大信息科学技术学院 https://sist.ustc.edu.cn/main.htm
+中科大苏州高等研究院 https://sz.ustc.edu.cn/index.html
+中科大软件学院 https://sse.ustc.edu.cn/main.htm
+中科大先进技术研究院 https://iat.ustc.edu.cn/iat/index.html"""
 
 # 网站列表
 urls = [
-  #  'http://sds.ustc.edu.cn/main.htm',
-    'http://sds.ustc.edu.cn/15443/list.htm',
-    'https://zsb.ustc.edu.cn/main.htm',
-    'http://www.job.ustc.edu.cn/index.htm',
-  #  'https://www.teach.ustc.edu.cn/',
-  #  'https://finance.ustc.edu.cn/main.htm',
-    'https://finance.ustc.edu.cn/xzzx/list.psp',
-
-    # 需要登录
-    'https://xgyth.ustc.edu.cn/usp/home/main.aspx',
-
-  #  'http://gradschool.ustc.edu.cn/',
-    
-    # 找到部分文件需要多级目录
-    'http://gradschool.ustc.edu.cn/column/11'
-
-    'https://bwc.ustc.edu.cn/5655/list.htm',
-    'http://press.ustc.edu.cn/xzzq/main.htm',
-    'http://ispc.ustc.edu.cn/6299/list.htm',
-    'http://zhb.ustc.edu.cn/18534/list1.htm',
-
-    # 有很多页面
-    'http://young.ustc.edu.cn/15056/list.htm',
-    
-    # 'http://ustcnet.ustc.edu.cn/main.htm',
-    'http://ustcnet.ustc.edu.cn/33419/list.htm',
-    # 'https://zhc.ustc.edu.cn/main.htm',
-    'https://zhc.ustc.edu.cn/wdxzn/list.htm',
-    'http://cs.ustc.edu.cn/main.htm',
-    'http://cybersec.ustc.edu.cn/main.htm',
-    'https://math.ustc.edu.cn/main.htm',
-    # 'https://sist.ustc.edu.cn/main.htm',
-    'https://sist.ustc.edu.cn/5079/list.htm',
-    # 'https://sz.ustc.edu.cn/index.html',
-    'https://sz.ustc.edu.cn/wdxz_list/98-1.html',
-    # 'https://sse.ustc.edu.cn/main.htm',
-    'https://sse.ustc.edu.cn/wdxz_19877/list.htm',
-    # 'https://iat.ustc.edu.cn/iat/index.html',
-    'https://iat.ustc.edu.cn/iat/x161/'
-    # 添加其余网址...
+  ('http://sds.ustc.edu.cn/', '中科大大数据学院'),
 ]
 
-for i in range(1, 16) :
-  urls.append(f'https://www.teach.ustc.edu.cn/download/all/page/{i}')
+# warnings.warn('only one site for test')
+for line in raw_text.split('\n') :
+  desc, url = line.split()
+  urls.append((url, desc))
 
-# 针对每个网站运行爬虫
-bar = tqdm(urls)
-bar.set_description('crawling web pages')
-for url in bar:
-  file_data_list = search(url, 2)
-  store_data_in_hbase(file_data_list)
-  save_visited_url(visited_url)
+file_data_list = search(urls, 3)
+
+store_data_in_hbase(file_data_list)
+save_visited_url(visited_url)
+save_log()
 
 print('Finished!')
+print(str(len(visited_url)) + ' pages were found!')
+print(str(len(file_data_list)) + ' files were found!')
