@@ -14,22 +14,20 @@ import happybase
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 
+from datetime import datetime
+
 from urllib.parse import urljoin, urlparse
 
-# HBase连接和表设置
-# 使用内存池，每次操作时新建连接，避免连接关闭
-pool = happybase.ConnectionPool(size = 3, host = 'localhost', port = 9090, protocol = 'compact', transport = 'framed', autoconnect = False)
-
 # 确保表格存在
-with pool.connection() as conn :
-  table_name = 'file_links'
-  families = {'file_info': dict()}
-  # 将其转换为 string
-  table_names = [x.decode('utf8') for x in conn.tables()]
-  if table_name not in table_names:
-    conn.create_table(table_name, families)
-  table = conn.table(table_name)
-  conn.close()
+conn = happybase.Connection(host = 'localhost', port = 9090, protocol = 'compact', transport = 'framed')
+table_name = 'file_links'
+families = {'file_info': dict()}
+# 将其转换为 string
+table_names = [x.decode('utf8') for x in conn.tables()]
+if table_name not in table_names:
+  conn.create_table(table_name, families)
+table = conn.table(table_name)
+conn.close()
 
 def load_visited_url() :
   warnings.warn('visited_url.json is not loaded')
@@ -40,6 +38,10 @@ def load_visited_url() :
   except FileNotFoundError :
     visited_url = set()
   return visited_url
+
+def save_json(obj, filename) :
+  with open(filename, 'w', encoding = 'utf8') as f :
+    json.dump(obj, f, ensure_ascii = False, indent = 2)
 
 def save_visited_url(visited_url) :
   with open('visited_url.json', 'w', encoding = 'utf8') as f :
@@ -69,10 +71,10 @@ def is_ustc_domain(url) :
   return True
 
 def is_downloadable(url) :
-  return re.search('\.(pdf|txt|docx|doc|xlsx|xls|ppt|pptx|tex|zip|csv|rar|tar\.gz)$', url, re.IGNORECASE) 
+  return re.search('\.(pdf|txt|docx|doc|xlsx|xls|ppt|pptx|tex|zip|csv|rar|tar\.gz|mp4)$', url, re.IGNORECASE) 
 
 # 爬虫函数
-def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_interval = 100) :
+def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_interval = 100, timeout = 2) :
   
   '''
   爬取指定 url 中的文件，并访问期中的 url。 
@@ -113,16 +115,19 @@ def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_in
     if bar.n % auto_save_interval == 0 :
       save_visited_url(visited_url)
       save_queue_cache()
+      save_json(file_data_list, 'file-links.json')
       save_log()
     try :
-      response = requests.get(url)
+      content_type = requests.head(url, timeout = timeout).headers.get('Content-Type', '')
+
       # 检查 Header 中是否有 html
-      if not 'html' in response.headers.get('Content-Type', '').lower() :
+      if (not 'html' in content_type.lower()) and (not content_type == '') and (not content_type == 'text/plain'):
         log_json['not-html'].append({
           'url': url,
-          'content-type': response.headers.get('Content-Type', '')
+          'content-type': content_type
         })
         continue
+      response = requests.get(url, timeout = timeout)
       soup = BeautifulSoup(response.content, 'html.parser')
       
       time.sleep(0.1)  # 每个请求之间暂停0.1秒
@@ -146,8 +151,14 @@ def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_in
           continue
         visited_url.add(real_url)
 
+        last_modified = response.headers.get('Last-Modified', '')
+        if len(last_modified) > 0 :
+          date = datetime.strptime(last_modified, '%a, %d %b %Y %H:%M:%S %Z')
+          last_modified = date.strftime('%Y-%m-%d')
+
         if is_downloadable(real_url) :
           file_type = real_url.split('.')[-1]
+
           file_data_list.append({
             'title': descript,
             'type': file_type,
@@ -155,7 +166,8 @@ def search(url_list, dep_limit: int, prevent_not_ustc: bool = True, auto_save_in
             'root': element['stack'][0]['desc'],
             'source': url,
             'url': real_url,
-            'crawl-time': datetime.datetime.now().strftime("%Y-%m-%d")
+            'last-modified': last_modified,
+            'crawl-time': datetime.now().strftime("%Y-%m-%d")
           })
         elif ttl > 0 :
           next_stack = list(element['stack'])
@@ -187,15 +199,16 @@ def store_data_in_hbase(data) :
   if len(data) == 0 :
     return
   key_feilds = ['title', 'type', 'url']
-  with pool.connection() as conn :
-    table = conn.table(table_name)
-    with table.batch() as batch :
-      for file_data in tqdm(data) :
-        key_data = {key: file_data[key] for key in key_feilds}
-        row_key = hashlib.sha256(str(key_data).encode('utf8')).hexdigest().encode('utf8')
-        for key, val in file_data.items() :
-          batch.put(row_key, {f'file_info:{key}'.encode('utf8'): str(val).encode('utf8')})
-      batch.send()
+  conn = happybase.Connection(host = 'localhost', port = 9090, protocol = 'compact', transport = 'framed')
+  table = conn.table(table_name)
+  with table.batch() as batch :
+    for file_data in tqdm(data) :
+      key_data = {key: file_data[key] for key in key_feilds}
+      row_key = hashlib.sha256(str(key_data).encode('utf8')).hexdigest().encode('utf8')
+      for key, val in file_data.items() :
+        batch.put(row_key, {f'file_info:{key}'.encode('utf8'): str(val).encode('utf8')})
+    batch.send()
+  conn.close()
 
 raw_text = r"""中科大本科生招生网 https://zsb.ustc.edu.cn/main.htm
 中科大就业信息网 http://www.job.ustc.edu.cn/index.htm
@@ -229,6 +242,8 @@ for line in raw_text.split('\n') :
   urls.append((url, desc))
 
 file_data_list = search(urls, 3)
+
+save_json(file_data_list, 'file-links.json')
 
 store_data_in_hbase(file_data_list)
 save_visited_url(visited_url)

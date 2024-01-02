@@ -1,14 +1,90 @@
 <!DOCTYPE html>
 <html>
   <head>
-
+    <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.css" /> -->
+    <link rel="stylesheet" href="/static/fontawesome-free-6.4.0-web/css/all.css" />
+    <link rel="stylesheet" href="/static/css/index.css" />
+    <script src="static/js/jquery-3.7.1.min.js"></script>
   </head>
   <body>
-    <input id="search-bar"/>
-    <button id="search-bar-ok">Search</button>
+    <div class="search-bar-container">
+      <div class="title-container">
+      <h1 style="text-align: center;">USTC 文件搜索</h1>
+      </div>
+      <input id="search-bar" placeholder="随便搜点啥吧"/>
+      <button id="search-bar-ok"><i class="fas fa-search"></i></button>
+    </div>
+    <div id="result-container">
+      <div class="result-item" style="display: none;">
+        <div class="result-item-title-wrapper">
+          <b class="result-item-title">
+            title
+          </b>
+          <a class="result-item-download" target="_blank"><i class="fas fa-download"></i></a>
+        </div>
+        <div class="result-info-wrapper">
+          <table class="result-info-table">
+            <tr>
+              <th>根目录</th>
+              <td class="result-info-root"></td>
+            </tr>
+            <tr>
+              <th>来源</th>
+              <td class="result-info-source"></td>
+            </tr>
+            <tr>
+              <th>路径</th>
+              <td class="result-info-path"></td>
+            </tr>
+            <tr>
+              <th>文档类型</th>
+              <td class="result-info-type"></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
 
     <script>
       button = document.getElementById('search-bar-ok')
+      
+      keyFields = [
+        {
+          'class': 'result-item-title',
+          'parser': (node, item) => {
+            // const _url = item.url;
+            const info = item.title;
+            node.innerHTML = info;
+          }
+        }, {
+          'class': 'result-info-source',
+          'parser': (node, item) => {
+            source = item.source;
+            node.innerHTML = '<a href=\'' + source + '\'>' + source + '</a>';
+          }
+        }, {
+          'class': 'result-info-root',
+          'parser': (node, item) => {
+            node.innerHTML = item.root
+          }
+        }, {
+          'class': 'result-info-type',
+          'parser': (node, item) => {
+            node.innerHTML = item.type
+          }
+        }, {
+          'class': 'result-info-path',
+          'parser': (node, item) => {
+            node.innerHTML = item.path
+          }
+        }, {
+          'class': 'result-item-download',
+          'parser': (node, item) => {
+            node.href = item.url
+          }
+        }
+      ];
+
       button.onclick = function() {
         const params = new URLSearchParams();
         params.append('q', document.getElementById('search-bar').value);
@@ -17,9 +93,41 @@
         fetch(url)
           .then(response => response.json())
           .then(data => {
-            console.log(data)
+            data = data.hits.hits
+            container = document.getElementById('result-container');
+            sampleNode = container.getElementsByClassName('result-item')[0];
+
+            container.innerHTML = '';
+            container.appendChild(sampleNode);            
+            
+            for (i in data) {
+              item = data[i]._source;
+              div = sampleNode.cloneNode(true);
+              for (j in keyFields) {
+                obj = keyFields[j];
+                nodeList = div.getElementsByClassName(obj.class);
+                for (k in nodeList) {
+                  obj.parser(nodeList[k], item);
+                }
+              }
+
+              // show data for debugging usage 
+              // div.innerHTML += '<p>' + JSON.stringify(item) + '</p>';
+              
+              div.style.display = 'block';
+              container.appendChild(div)
+            }
           })
-      } 
+      };
+      
+      document.getElementById('search-bar').addEventListener('keydown', event => {
+        if (event.key == 'Enter') {
+          document.activeElement.blur();
+          button.click();
+        } else if (event.key == 'Escape') {
+          document.activeElement.blur();
+        }
+      });
     </script>
   </body>
 </html>

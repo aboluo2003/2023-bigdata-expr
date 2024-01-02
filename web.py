@@ -9,7 +9,6 @@ es = Elasticsearch(hosts = [{'host': 'localhost', 'port': 9200, 'scheme': 'http'
 
 index_name = 'file_links'
 
-
 # l = []
 # for doc in es.scan(index = index_name) :
 #   l.append(doc)
@@ -38,4 +37,4 @@ def query_in_es() :
   return dict(search_result)
 
 app.static_folder = 'static'
-app.run(host = "localhost", port = 8080, debug = True)
+app.run(host = "0.0.0.0", port = 8080, debug = True)
