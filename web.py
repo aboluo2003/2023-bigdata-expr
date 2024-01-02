@@ -24,6 +24,8 @@ def hello_world() :
 @app.route('/query', methods = ['GET'])
 def query_in_es() :
   args = request.args
+  from_ = args.get('from', 0, int)
+  size = args.get('size', 10, int)
   query = {
     'query': {
       'multi_match': {
@@ -31,8 +33,11 @@ def query_in_es() :
         'fields': WebConfig.fields
       }
     },
-    'track_total_hits': True
+    'track_total_hits': True,
+    'from': from_,
+    'size': size
   }
+
   search_result = es.search(index = index_name, body = query)
   return dict(search_result)
 

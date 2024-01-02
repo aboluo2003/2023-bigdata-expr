@@ -15,6 +15,7 @@
       <button id="search-bar-ok"><i class="fas fa-search"></i></button>
     </div>
     <div id="result-container">
+      <p id="result-num" style="display: none;">共 条搜索结果，当前在第 页，从第 条到第 条</p>
       <div class="result-item" style="display: none;">
         <div class="result-item-title-wrapper">
           <b class="result-item-title">
@@ -44,10 +45,24 @@
         </div>
       </div>
     </div>
+    <div class="indexer-wrapper">
+      <button id="indexer-pre"><i class="fas fa-arrow-left"></i> 前一页</button>
+      <button id="indexer-suf">后一页 <i class="fas fa-arrow-right"></i></button>
+    </div>
+    <div id="footer">
+      
+    </div>
 
     <script>
       button = document.getElementById('search-bar-ok')
-      
+      button_pre = $('#indexer-pre')[0]
+      button_suf = $('#indexer-suf')[0]
+
+      page = 0
+      size = 10
+      total = undefined
+      last_query_value = ''
+
       keyFields = [
         {
           'class': 'result-item-title',
@@ -84,42 +99,135 @@
           }
         }
       ];
+      
+      function maintain() {
+        if (total == undefined) {
+          button_pre.style.display = 'none'
+          button_suf.style.display = 'none'
+          $('#result-num')[0].style.display = 'none'
+        } else if (total == 0) {
+          $('#result-num')[0].innerHTML = '什么也没有找到捏'
+          $('#result-num')[0].style.display = 'block'
+          button_pre.style.display = 'none'
+          button_suf.style.display = 'none'
+        } else {
+          $('#result-num')[0].style.display = 'block'
+          if (page > 0) {
+            button_pre.style.display = 'block'
+          } else {
+            button_pre.style.display = 'none'
+          }
+          if ((page + 1) * size < total) {
+            button_suf.style.display = 'block'
+          } else {
+            button_suf.style.display = 'none'
+          }
+        }
+      }
+      maintain()
+      
+      function clean_container(container) {
+        children = container.children
+        len = children.length
+        first = true
+        for (var i = 0, pos = 0; i < len; i++) {
+          child = children[pos]
+          if (child.nodeName.toLowerCase() == 'div') {
+            if (first) {
+              first = false;
+              pos++;
+            } else {
+              child.remove()
+            }
+          } else {
+            pos++
+          }
+        }
+      }
 
-      button.onclick = function() {
-        const params = new URLSearchParams();
-        params.append('q', document.getElementById('search-bar').value);
+      function response_search(value) {
+        if (value.length > 0) {
+          const params = new URLSearchParams();
+          params.append('q', value);
+          params.append('from', page * size)
+          params.append('size', size)
+          
+          const url = '/query?' + params.toString();
+          button.disabled = true
+          fetch(url)
+            .then(response => response.json())
+            .then(data => {
+              // console.log(data)
+              
+              total = data.hits.total.value
+              // console.log()
+              
+              real_from = page * size + 1
+              real_to = Math.min((page + 1) * size, total)
+              
+              $('#result-num')[0].innerHTML = '共 ' + total.toString() + ' 条搜索结果，当前在第 ' + (page + 1).toString() + ' 页，从第 ' + real_from.toString() + ' 条到第 ' + real_to.toString() + ' 条'
 
-        const url = '/query?' + params.toString();
-        fetch(url)
-          .then(response => response.json())
-          .then(data => {
-            data = data.hits.hits
-            container = document.getElementById('result-container');
-            sampleNode = container.getElementsByClassName('result-item')[0];
-
-            container.innerHTML = '';
-            container.appendChild(sampleNode);            
-            
-            for (i in data) {
-              item = data[i]._source;
-              div = sampleNode.cloneNode(true);
-              for (j in keyFields) {
-                obj = keyFields[j];
-                nodeList = div.getElementsByClassName(obj.class);
-                for (k in nodeList) {
-                  obj.parser(nodeList[k], item);
+              data = data.hits.hits
+              container = document.getElementById('result-container');
+              sampleNode = container.getElementsByClassName('result-item')[0];
+              
+              clean_container(container)
+              
+              for (i in data) {
+                item = data[i]._source;
+                div = sampleNode.cloneNode(true);
+                for (j in keyFields) {
+                  obj = keyFields[j];
+                  nodeList = div.getElementsByClassName(obj.class);
+                  for (k in nodeList) {
+                    obj.parser(nodeList[k], item);
+                  }
                 }
+
+                // show data for debugging usage 
+                // div.innerHTML += '<p>' + JSON.stringify(item) + '</p>';
+                
+                div.style.display = 'block';
+                container.appendChild(div)
               }
 
-              // show data for debugging usage 
-              // div.innerHTML += '<p>' + JSON.stringify(item) + '</p>';
-              
-              div.style.display = 'block';
-              container.appendChild(div)
-            }
-          })
+              button.disabled = false
+              maintain()
+            })
+        } else {
+          last_query_value = ''
+          total = undefined
+          page = 0
+          
+          clean_container($('#result-container')[0])
+          $('#result-num')[0].style.display = 'none'
+          maintain()
+        }
+      }
+
+      button.onclick = function() {
+        const value = document.getElementById('search-bar').value;
+        last_query_value = value
+        page = 0
+        response_search(value)
       };
       
+      button_pre.onclick = function() {
+        if (page > 0) {
+          page -= 1
+          response_search(last_query_value)
+          window.scrollTo(0, 0)
+        }
+      }
+
+      button_suf.onclick = function() {
+        if ((page + 1) * size < total) {
+          page += 1;
+          response_search(last_query_value)
+          window.scrollTo(0, 0)
+        }
+      }
+
       document.getElementById('search-bar').addEventListener('keydown', event => {
         if (event.key == 'Enter') {
           document.activeElement.blur();
